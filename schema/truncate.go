@@ -35,8 +35,9 @@ func TruncateLines(output string, keepFirst, keepLast int) string {
 
 	// Truncation marker
 	removed := totalLines - threshold
-	result.WriteString(fmt.Sprintf("\n[...%d lines truncated...]\n", removed))
-	result.WriteString("(Use read_file with offset/limit to see the full content)\n\n")
+	result.WriteString(fmt.Sprintf("\n[...%d lines truncated — content NOT shown above...]\n", removed))
+	result.WriteString("(⚠ Do NOT use text from this truncated view for edit_file old_text — it will fail.)\n")
+	result.WriteString("(Use read_file with offset/limit to see the missing lines before editing.)\n\n")
 
 	// Last M lines
 	startLast := totalLines - keepLast
@@ -63,18 +64,21 @@ func TruncateShellOutput(output string) string {
 	return TruncateLines(output, 20, 10)
 }
 
-// TruncateFileRead truncates file read output.
-// Default: keep first 50 + last 10 lines if over 80 lines total.
+// TruncateFileRead truncates file read output for very large files.
+// Files under 300 lines are returned in full — truncating small/medium files
+// causes edit_file failures because the model constructs old_text from the
+// truncated view which won't match the actual file content.
+// Only files over 300 lines get truncated (first 150 + last 30).
 func TruncateFileRead(content string, truncated bool) string {
-	if !truncated {
-		lines := strings.Split(content, "\n")
-		if len(lines) <= 80 {
-			return content
-		}
-		return TruncateLines(content, 50, 10)
+	if truncated {
+		// Already truncated by offset/limit, return as-is
+		return content
 	}
-	// Already truncated by offset/limit, return as-is
-	return content
+	lines := strings.Split(content, "\n")
+	if len(lines) <= 300 {
+		return content
+	}
+	return TruncateLines(content, 150, 30)
 }
 
 // SummarizeFileWrite creates a brief summary for file write operations.

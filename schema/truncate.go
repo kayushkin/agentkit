@@ -65,20 +65,21 @@ func TruncateShellOutput(output string) string {
 }
 
 // TruncateFileRead truncates file read output for very large files.
-// Files under 300 lines are returned in full — truncating small/medium files
-// causes edit_file failures because the model constructs old_text from the
-// truncated view which won't match the actual file content.
-// Only files over 300 lines get truncated (first 150 + last 30).
+// Files under 2000 lines are returned in full — truncating source files
+// causes repeated re-reads that waste API turns (far more expensive than
+// the extra context tokens). Truncation is for large error logs, content
+// dumps, and generated files — not normal source code.
+// Files over 2000 lines get truncated (first 500 + last 50).
 func TruncateFileRead(content string, truncated bool) string {
 	if truncated {
 		// Already truncated by offset/limit, return as-is
 		return content
 	}
 	lines := strings.Split(content, "\n")
-	if len(lines) <= 300 {
+	if len(lines) <= 2000 {
 		return content
 	}
-	return TruncateLines(content, 150, 30)
+	return TruncateLines(content, 500, 50)
 }
 
 // SummarizeFileWrite creates a brief summary for file write operations.

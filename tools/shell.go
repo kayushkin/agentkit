@@ -3,7 +3,9 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/kayushkin/agentkit"
@@ -32,6 +34,8 @@ func Shell() agentkit.Tool {
 			if in.Workdir != "" {
 				cmd.Dir = in.Workdir
 			}
+			// Ensure common dev tools are on PATH (mise, go, node, etc.)
+			cmd.Env = ensureDevToolsOnPath()
 			out, err := cmd.CombinedOutput()
 			result := string(out)
 			if err != nil {
@@ -80,4 +84,30 @@ func truncateShellOutput(s string) string {
 	tail := strings.Join(lines[len(lines)-tailLines:], "\n")
 	omitted := len(lines) - headLines - tailLines
 	return fmt.Sprintf("%s\n\n[... %d lines omitted ...]\n\n%s", head, omitted, tail)
+}
+
+// ensureDevToolsOnPath returns os.Environ() with mise shim paths prepended to PATH.
+func ensureDevToolsOnPath() []string {
+	env := os.Environ()
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		return env
+	}
+
+	// Paths where mise installs tool shims/binaries
+	extraPaths := []string{
+		filepath.Join(home, ".local", "share", "mise", "shims"),
+		filepath.Join(home, ".local", "bin"),
+		filepath.Join(home, "bin"),
+		filepath.Join(home, "go", "bin"),
+	}
+
+	for i, e := range env {
+		if strings.HasPrefix(e, "PATH=") {
+			existing := e[5:]
+			env[i] = "PATH=" + strings.Join(extraPaths, ":") + ":" + existing
+			return env
+		}
+	}
+	return env
 }

@@ -21,7 +21,7 @@ func ReadFile() agentkit.Tool {
 		Limit  int      `json:"limit"`
 	}
 	return agentkit.Tool{
-		Name:        "read_file",
+		Name:        "read_files",
 		Description: "Read file contents. Use 'path' for a single file, or 'paths' (array) to read multiple files at once — prefer batching reads to save turns. For large files, use offset (1-indexed line) and limit (max lines).",
 		InputSchema: schema.Props([]string{}, map[string]any{
 			"path":   schema.Str("Path to a single file"),
@@ -100,74 +100,121 @@ func readSingleFile(path string, offset, limit int) string {
 	return content
 }
 
-// WriteFile returns a tool that creates or overwrites a file.
+// WriteFile returns a tool that creates or overwrites files.
 func WriteFile() agentkit.Tool {
-	type input struct {
+	type fileEntry struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
 	}
+	type input struct {
+		Path    string      `json:"path"`
+		Content string      `json:"content"`
+		Files   []fileEntry `json:"files"`
+	}
 	return agentkit.Tool{
-		Name:        "write_file",
-		Description: "Create or overwrite a file with the given content. Creates parent directories automatically.",
-		InputSchema: schema.Props([]string{"path", "content"}, map[string]any{
-			"path":    schema.Str("Path to the file to write"),
-			"content": schema.Str("Content to write to the file"),
+		Name:        "write_files",
+		Description: "Create or overwrite files. Use files[] to write multiple at once. Always pair writes with a build/test — writes are deterministic, don't waste a turn on just writes.",
+		InputSchema: schema.Props([]string{}, map[string]any{
+			"path":    schema.Str("Path to a single file to write"),
+			"content": schema.Str("Content for the single file"),
+			"files":   map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"path": schema.Str("File path"), "content": schema.Str("File content")}, "required": []string{"path", "content"}}, "description": "Multiple files to write at once (preferred for batching)"},
 		}),
 		Run: func(ctx context.Context, raw string) (string, error) {
 			in, err := schema.Parse[input](raw)
 			if err != nil {
 				return "", err
 			}
-			if err := os.MkdirAll(filepath.Dir(in.Path), 0755); err != nil {
-				return fmt.Sprintf("error creating directory: %s", err), nil
+
+			// Collect all files to write.
+			files := in.Files
+			if in.Path != "" {
+				files = append([]fileEntry{{Path: in.Path, Content: in.Content}}, files...)
 			}
-			if err := os.WriteFile(in.Path, []byte(in.Content), 0644); err != nil {
-				return fmt.Sprintf("error writing file: %s", err), nil
+			if len(files) == 0 {
+				return "error: provide 'path'+'content' or 'files'", nil
 			}
-			return fmt.Sprintf("wrote %d bytes to %s", len(in.Content), in.Path), nil
+
+			var results []string
+			for _, f := range files {
+				if err := os.MkdirAll(filepath.Dir(f.Path), 0755); err != nil {
+					results = append(results, fmt.Sprintf("error creating directory for %s: %s", f.Path, err))
+					continue
+				}
+				if err := os.WriteFile(f.Path, []byte(f.Content), 0644); err != nil {
+					results = append(results, fmt.Sprintf("error writing %s: %s", f.Path, err))
+					continue
+				}
+				results = append(results, fmt.Sprintf("wrote %d bytes to %s", len(f.Content), f.Path))
+			}
+			return strings.Join(results, "\n"), nil
 		},
 	}
 }
 
-// EditFile returns a tool that does exact string replacement in a file.
+// EditFile returns a tool that does exact string replacement in files.
 func EditFile() agentkit.Tool {
-	type input struct {
+	type editEntry struct {
 		Path    string `json:"path"`
 		OldText string `json:"old_text"`
 		NewText string `json:"new_text"`
 	}
+	type input struct {
+		Path    string      `json:"path"`
+		OldText string      `json:"old_text"`
+		NewText string      `json:"new_text"`
+		Edits   []editEntry `json:"edits"`
+	}
 	return agentkit.Tool{
-		Name:        "edit_file",
-		Description: "Edit a file by replacing an exact text match with new text. The old_text must match exactly (including whitespace). Use for precise, surgical edits.",
-		InputSchema: schema.Props([]string{"path", "old_text", "new_text"}, map[string]any{
-			"path":     schema.Str("Path to the file to edit"),
+		Name:        "edit_files",
+		Description: "Make exact text replacements. Use edits[] for multiple files at once. Always pair with verification (build, grep, read) — edits are deterministic.",
+		InputSchema: schema.Props([]string{}, map[string]any{
+			"path":     schema.Str("Path to a single file to edit"),
 			"old_text": schema.Str("Exact text to find and replace"),
 			"new_text": schema.Str("New text to replace the old text with"),
+			"edits":    map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"path": schema.Str("File path"), "old_text": schema.Str("Text to find"), "new_text": schema.Str("Replacement text")}, "required": []string{"path", "old_text", "new_text"}}, "description": "Multiple edits to apply at once (preferred for batching)"},
 		}),
 		Run: func(ctx context.Context, raw string) (string, error) {
 			in, err := schema.Parse[input](raw)
 			if err != nil {
 				return "", err
 			}
-			data, err := os.ReadFile(in.Path)
-			if err != nil {
-				return fmt.Sprintf("error: %s", err), nil
-			}
-			content := string(data)
 
-			count := strings.Count(content, in.OldText)
-			if count == 0 {
-				return "error: old_text not found in file", nil
+			// Collect all edits.
+			edits := in.Edits
+			if in.Path != "" {
+				edits = append([]editEntry{{Path: in.Path, OldText: in.OldText, NewText: in.NewText}}, edits...)
 			}
-			if count > 1 {
-				return fmt.Sprintf("error: old_text matches %d times — must be unique", count), nil
+			if len(edits) == 0 {
+				return "error: provide 'path'+'old_text'+'new_text' or 'edits'", nil
 			}
 
-			newContent := strings.Replace(content, in.OldText, in.NewText, 1)
-			if err := os.WriteFile(in.Path, []byte(newContent), 0644); err != nil {
-				return fmt.Sprintf("error writing file: %s", err), nil
+			var results []string
+			for _, e := range edits {
+				data, err := os.ReadFile(e.Path)
+				if err != nil {
+					results = append(results, fmt.Sprintf("error: %s", err))
+					continue
+				}
+				content := string(data)
+
+				count := strings.Count(content, e.OldText)
+				if count == 0 {
+					results = append(results, fmt.Sprintf("error: old_text not found in %s", e.Path))
+					continue
+				}
+				if count > 1 {
+					results = append(results, fmt.Sprintf("error: old_text matches %d times in %s — must be unique", count, e.Path))
+					continue
+				}
+
+				newContent := strings.Replace(content, e.OldText, e.NewText, 1)
+				if err := os.WriteFile(e.Path, []byte(newContent), 0644); err != nil {
+					results = append(results, fmt.Sprintf("error writing %s: %s", e.Path, err))
+					continue
+				}
+				results = append(results, fmt.Sprintf("edited %s", e.Path))
 			}
-			return fmt.Sprintf("edited %s", in.Path), nil
+			return strings.Join(results, "\n"), nil
 		},
 	}
 }

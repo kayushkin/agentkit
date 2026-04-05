@@ -15,39 +15,61 @@ import (
 // Shell returns a tool that executes shell commands via bash.
 func Shell() agentkit.Tool {
 	type input struct {
-		Command string `json:"command"`
-		Workdir string `json:"workdir"`
+		Command  string   `json:"command"`
+		Commands []string `json:"commands"`
+		Workdir  string   `json:"workdir"`
 	}
 	return agentkit.Tool{
-		Name:        "shell",
-		Description: "Execute a shell command via bash -c. Returns stdout+stderr combined. Use for running programs, git, builds, etc.",
-		InputSchema: schema.Props([]string{"command"}, map[string]any{
-			"command": schema.Str("Shell command to execute"),
-			"workdir": schema.Str("Working directory (optional, defaults to cwd)"),
+		Name:        "shell_commands",
+		Description: "Run one or more shell commands. Use commands[] array to run multiple in sequence (preferred). Each turn is expensive — maximize work per call.",
+		InputSchema: schema.Props([]string{}, map[string]any{
+			"command":  schema.Str("Single shell command to execute"),
+			"commands": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Multiple commands to run sequentially (preferred)"},
+			"workdir":  schema.Str("Working directory (optional, defaults to cwd)"),
 		}),
 		Run: func(ctx context.Context, raw string) (string, error) {
 			in, err := schema.Parse[input](raw)
 			if err != nil {
 				return "", err
 			}
-			cmd := exec.CommandContext(ctx, "bash", "-c", in.Command)
-			if in.Workdir != "" {
-				cmd.Dir = in.Workdir
+
+			// Collect commands to run.
+			cmds := in.Commands
+			if in.Command != "" {
+				if len(cmds) == 0 {
+					cmds = []string{in.Command}
+				} else {
+					cmds = append([]string{in.Command}, cmds...)
+				}
 			}
-			// Ensure common dev tools are on PATH (mise, go, node, etc.)
-			cmd.Env = ensureDevToolsOnPath()
-			out, err := cmd.CombinedOutput()
-			result := string(out)
-			if err != nil {
-				result = fmt.Sprintf("%s\nexit: %s", result, err)
+			if len(cmds) == 0 {
+				return "error: provide 'command' or 'commands'", nil
 			}
-			if result == "" {
-				result = "(no output)"
+
+			var results []string
+			for _, c := range cmds {
+				cmd := exec.CommandContext(ctx, "bash", "-c", c)
+				if in.Workdir != "" {
+					cmd.Dir = in.Workdir
+				}
+				// Ensure common dev tools are on PATH (mise, go, node, etc.)
+				cmd.Env = ensureDevToolsOnPath()
+				out, err := cmd.CombinedOutput()
+				result := string(out)
+				if err != nil {
+					result = fmt.Sprintf("%s\nexit: %s", result, err)
+				}
+				if result == "" {
+					result = "(no output)"
+				}
+				result = truncateShellOutput(result)
+				if len(cmds) > 1 {
+					results = append(results, fmt.Sprintf("=== $ %s ===\n%s", c, result))
+				} else {
+					results = append(results, result)
+				}
 			}
-			
-			// Apply smart truncation to keep context manageable
-			result = truncateShellOutput(result)
-			return result, nil
+			return strings.Join(results, "\n\n"), nil
 		},
 	}
 }

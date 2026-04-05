@@ -129,7 +129,7 @@ func SummarizeOldToolResult(toolName, fullOutput string) string {
 
 	// Tool-specific extraction
 	switch toolName {
-	case "shell":
+	case "shell", "shell_commands":
 		// Include first line (command result) and any error markers
 		if lineCount > 0 {
 			summary.WriteString("\n")
@@ -139,11 +139,11 @@ func SummarizeOldToolResult(toolName, fullOutput string) string {
 			}
 		}
 
-	case "read_file":
+	case "read_file", "read_files":
 		// Just note what was read
 		summary.WriteString(" - content available in full history")
 
-	case "write_file", "edit_file":
+	case "write_file", "edit_file", "write_files", "edit_files":
 		// These are already brief, keep as-is
 		return fullOutput
 

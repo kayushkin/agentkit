@@ -20,7 +20,7 @@ func Grep() agentkit.Tool {
 		Flags     string   `json:"flags"`
 	}
 	return agentkit.Tool{
-		Name: "grep",
+		Name: "ripgrep",
 		Description: `Search file contents for a pattern using ripgrep (rg). Returns matching lines with file:line prefix.
 - pattern: regex pattern to search for
 - paths: files or directories to search (default: current directory)

@@ -34,8 +34,7 @@ type TaskItem struct {
 
 // TaskPlan represents the full plan state.
 type TaskPlan struct {
-	Tasks []TaskItem        `json:"tasks"`
-	Notes map[string]string `json:"notes,omitempty"`
+	Tasks []TaskItem `json:"tasks"`
 }
 
 // TaskPlanBuildCommand is the build command to run when all tasks are done.
@@ -51,18 +50,17 @@ func TaskPlanTool(repoRoot string) agentkit.Tool {
 		Description: `Manage your task plan. This is your working memory — it persists across turns and is always visible to you.
 
 Actions:
-- "update": Replace the full plan (tasks + notes). Use when restructuring.
-- "complete": Mark a task done by index (0-based). Completed tasks are auto-removed next turn.
+- "update": Replace the full task list. Use when restructuring.
+- "complete": Mark a task done by index (0-based). Completed tasks are auto-removed.
 - "add": Add a new task.
-- "note": Set a key-value note (e.g. file structure, API endpoints found).
-- "remove_note": Remove a note by key.
+- "start": Mark a task as in_progress by index.
 
 The task plan drives your work. When all tasks are complete, a build/test runs automatically.
-If it fails, a fix task is added for you. Keep the plan updated as you work.`,
+If it fails, a fix task is added for you. Use the scratchpad tool for working notes.`,
 		InputSchema: schema.Props([]string{"action"}, map[string]any{
 			"action": map[string]any{
 				"type":        "string",
-				"enum":        []string{"update", "complete", "add", "note", "remove_note"},
+				"enum":        []string{"update", "complete", "add", "start"},
 				"description": "Action to perform",
 			},
 			"tasks": map[string]any{
@@ -78,13 +76,9 @@ If it fails, a fix task is added for you. Keep the plan updated as you work.`,
 					"required": []string{"task", "status"},
 				},
 			},
-			"notes": map[string]any{
-				"type":        "object",
-				"description": "Full notes map for 'update' action",
-			},
 			"index": map[string]any{
 				"type":        "integer",
-				"description": "Task index (0-based) for 'complete' action",
+				"description": "Task index (0-based) for 'complete'/'start' action",
 			},
 			"task": map[string]any{
 				"type":        "string",
@@ -94,14 +88,6 @@ If it fails, a fix task is added for you. Keep the plan updated as you work.`,
 				"type":        "string",
 				"description": "Task description for 'add' action",
 			},
-			"key": map[string]any{
-				"type":        "string",
-				"description": "Note key for 'note'/'remove_note' action",
-			},
-			"value": map[string]any{
-				"type":        "string",
-				"description": "Note value for 'note' action",
-			},
 		}),
 		Run: func(ctx context.Context, raw string) (string, error) {
 			return runTaskPlan(repoRoot, raw)
@@ -110,14 +96,11 @@ If it fails, a fix task is added for you. Keep the plan updated as you work.`,
 }
 
 type taskPlanInput struct {
-	Action      string            `json:"action"`
-	Tasks       []TaskItem        `json:"tasks,omitempty"`
-	Notes       map[string]string `json:"notes,omitempty"`
-	Index       *int              `json:"index,omitempty"`
-	Task        string            `json:"task,omitempty"`
-	Description string            `json:"description,omitempty"`
-	Key         string            `json:"key,omitempty"`
-	Value       string            `json:"value,omitempty"`
+	Action      string     `json:"action"`
+	Tasks       []TaskItem `json:"tasks,omitempty"`
+	Index       *int       `json:"index,omitempty"`
+	Task        string     `json:"task,omitempty"`
+	Description string     `json:"description,omitempty"`
 }
 
 func runTaskPlan(repoRoot, raw string) (string, error) {
@@ -131,9 +114,6 @@ func runTaskPlan(repoRoot, raw string) (string, error) {
 	switch in.Action {
 	case "update":
 		plan.Tasks = in.Tasks
-		if in.Notes != nil {
-			plan.Notes = in.Notes
-		}
 
 	case "complete":
 		if in.Index == nil {
@@ -145,6 +125,16 @@ func runTaskPlan(repoRoot, raw string) (string, error) {
 		}
 		plan.Tasks[idx].Status = TaskDone
 
+	case "start":
+		if in.Index == nil {
+			return "error: 'index' required for start action", nil
+		}
+		idx := *in.Index
+		if idx < 0 || idx >= len(plan.Tasks) {
+			return fmt.Sprintf("error: index %d out of range (0-%d)", idx, len(plan.Tasks)-1), nil
+		}
+		plan.Tasks[idx].Status = TaskInProgress
+
 	case "add":
 		if in.Task == "" {
 			return "error: 'task' required for add action", nil
@@ -154,21 +144,6 @@ func runTaskPlan(repoRoot, raw string) (string, error) {
 			Description: in.Description,
 			Status:      TaskPending,
 		})
-
-	case "note":
-		if in.Key == "" {
-			return "error: 'key' required for note action", nil
-		}
-		if plan.Notes == nil {
-			plan.Notes = make(map[string]string)
-		}
-		plan.Notes[in.Key] = in.Value
-
-	case "remove_note":
-		if in.Key == "" {
-			return "error: 'key' required for remove_note action", nil
-		}
-		delete(plan.Notes, in.Key)
 
 	default:
 		return fmt.Sprintf("error: unknown action %q", in.Action), nil
@@ -209,7 +184,7 @@ func runTaskPlan(repoRoot, raw string) (string, error) {
 	if completed > 0 {
 		return fmt.Sprintf("✓ %d task(s) completed and removed. %d remaining.", completed, remaining), nil
 	}
-	return fmt.Sprintf("Plan updated. %d task(s), %d note(s).", remaining, len(plan.Notes)), nil
+	return fmt.Sprintf("Plan updated. %d task(s).", remaining), nil
 }
 
 func planPath(repoRoot string) string {
@@ -219,13 +194,9 @@ func planPath(repoRoot string) string {
 func loadPlan(repoRoot string) *TaskPlan {
 	data, err := os.ReadFile(planPath(repoRoot))
 	if err != nil {
-		return &TaskPlan{Notes: make(map[string]string)}
+		return &TaskPlan{}
 	}
-	plan := parsePlanMD(string(data))
-	if plan.Notes == nil {
-		plan.Notes = make(map[string]string)
-	}
-	return plan
+	return parsePlanMD(string(data))
 }
 
 func savePlan(repoRoot string, plan *TaskPlan) error {
@@ -234,40 +205,15 @@ func savePlan(repoRoot string, plan *TaskPlan) error {
 
 // parsePlanMD parses the markdown task plan format.
 func parsePlanMD(content string) *TaskPlan {
-	plan := &TaskPlan{Notes: make(map[string]string)}
+	plan := &TaskPlan{}
 	lines := strings.Split(content, "\n")
 
-	section := ""
-	var noteKey string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-
-		if strings.HasPrefix(trimmed, "## Tasks") {
-			section = "tasks"
-			continue
-		}
-		if strings.HasPrefix(trimmed, "## Notes") {
-			section = "notes"
-			continue
-		}
-
-		switch section {
-		case "tasks":
-			if strings.HasPrefix(trimmed, "- [") {
-				task := parseTaskLine(trimmed)
-				if task != nil {
-					plan.Tasks = append(plan.Tasks, *task)
-				}
-			}
-		case "notes":
-			if strings.HasPrefix(trimmed, "### ") {
-				noteKey = strings.TrimPrefix(trimmed, "### ")
-			} else if noteKey != "" && trimmed != "" {
-				if existing, ok := plan.Notes[noteKey]; ok {
-					plan.Notes[noteKey] = existing + "\n" + trimmed
-				} else {
-					plan.Notes[noteKey] = trimmed
-				}
+		if strings.HasPrefix(trimmed, "- [") {
+			task := parseTaskLine(trimmed)
+			if task != nil {
+				plan.Tasks = append(plan.Tasks, *task)
 			}
 		}
 	}
@@ -326,13 +272,6 @@ func renderPlanMD(plan *TaskPlan) string {
 			b.WriteString(fmt.Sprintf(" — %s", t.Description))
 		}
 		b.WriteString("\n")
-	}
-
-	if len(plan.Notes) > 0 {
-		b.WriteString("\n## Notes\n")
-		for k, v := range plan.Notes {
-			b.WriteString(fmt.Sprintf("### %s\n%s\n\n", k, v))
-		}
 	}
 
 	return b.String()

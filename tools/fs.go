@@ -66,37 +66,58 @@ func ReadFile() agentkit.Tool {
 }
 
 // readSingleFile reads one file with optional offset/limit.
+// Appends metadata about completeness to prevent unnecessary re-reads.
 func readSingleFile(path string, offset, limit int) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Sprintf("error: %s", err)
 	}
-	content := string(data)
-	truncatedByUser := false
 
+	allLines := strings.Split(string(data), "\n")
+	totalLines := len(allLines)
+
+	// Manual offset/limit pagination.
 	if offset > 0 || limit > 0 {
-		lines := strings.Split(content, "\n")
 		start := 0
 		if offset > 0 {
 			start = offset - 1
 		}
-		if start > len(lines) {
-			return fmt.Sprintf("offset %d beyond file length (%d lines)", offset, len(lines))
+		if start > totalLines {
+			return fmt.Sprintf("offset %d beyond file length (%d lines)", offset, totalLines)
 		}
-		end := len(lines)
+		end := totalLines
 		if limit > 0 && start+limit < end {
 			end = start + limit
 		}
-		content = strings.Join(lines[start:end], "\n")
-		truncatedByUser = true
+		content := strings.Join(allLines[start:end], "\n")
+
+		// Tell the model what range it got and what remains.
+		if end < totalLines {
+			content += fmt.Sprintf("\n\n[showing lines %d-%d of %d. Use offset=%d to continue]", start+1, end, totalLines, end+1)
+		} else {
+			content += fmt.Sprintf("\n\n[showing lines %d-%d of %d — end of file]", start+1, end, totalLines)
+		}
+		return content
 	}
 
+	// Full file read — apply auto-truncation for very large files.
+	content := string(data)
 	const maxBytes = 100_000
 	if len(content) > maxBytes {
 		content = content[:maxBytes] + "\n... (truncated)"
 	}
+	content = schema.TruncateFileRead(content, false)
 
-	content = schema.TruncateFileRead(content, truncatedByUser)
+	// Check if truncation happened.
+	resultLines := strings.Count(content, "\n") + 1
+	if resultLines < totalLines {
+		// File was truncated. Show what range was returned and how to get more.
+		content += fmt.Sprintf("\n\n[showing first ~%d of %d lines — file truncated. Use offset/limit to read specific sections]", resultLines, totalLines)
+	} else {
+		// Complete file — explicitly say so to prevent re-reads.
+		content += fmt.Sprintf("\n\n[complete file — %d lines]", totalLines)
+	}
+
 	return content
 }
 

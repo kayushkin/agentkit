@@ -98,6 +98,16 @@ func scratchpadPath(repoRoot, agentName string) string {
 	return filepath.Join(repoRoot, scratchpadDir, agentName+".md")
 }
 
+// LoadScratchpadNotes reads notes from the scratchpad file.
+func LoadScratchpadNotes(repoRoot, agentName string) map[string]string {
+	return loadScratchpad(repoRoot, agentName)
+}
+
+// SaveScratchpadNotes writes notes to the scratchpad file.
+func SaveScratchpadNotes(repoRoot, agentName string, notes map[string]string) error {
+	return saveScratchpad(repoRoot, agentName, notes)
+}
+
 func loadScratchpad(repoRoot, agentName string) map[string]string {
 	data, err := os.ReadFile(scratchpadPath(repoRoot, agentName))
 	if err != nil {

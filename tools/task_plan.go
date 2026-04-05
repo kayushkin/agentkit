@@ -170,15 +170,15 @@ func runTaskPlan(repoRoot, raw string) (string, error) {
 	// Auto-build when all tasks complete.
 	if remaining == 0 && completed > 0 {
 		buildResult := runBuild(repoRoot)
-		if buildResult.success {
-			return fmt.Sprintf("✓ %d task(s) completed. All done!\n\n🔨 Auto-build passed:\n%s", completed, buildResult.output), nil
+		if buildResult.Success {
+			return fmt.Sprintf("✓ %d task(s) completed. All done!\n\n🔨 Auto-build passed:\n%s", completed, buildResult.Output), nil
 		}
 		// Build failed — add fix task.
-		if err := AddBuildErrorTask(repoRoot, buildResult.output); err != nil {
-			return fmt.Sprintf("✓ %d task(s) completed but auto-build failed (and couldn't save fix task):\n%s", completed, buildResult.output), nil
+		if err := AddBuildErrorTask(repoRoot, buildResult.Output); err != nil {
+			return fmt.Sprintf("✓ %d task(s) completed but auto-build failed (and couldn't save fix task):\n%s", completed, buildResult.Output), nil
 		}
 		// Re-read the plan to show the new task.
-		return fmt.Sprintf("✓ %d task(s) completed but auto-build FAILED. Added 'Fix build error' task.\n\n🔨 Build output:\n%s", completed, buildResult.output), nil
+		return fmt.Sprintf("✓ %d task(s) completed but auto-build FAILED. Added 'Fix build error' task.\n\n🔨 Build output:\n%s", completed, buildResult.Output), nil
 	}
 
 	if completed > 0 {
@@ -196,15 +196,15 @@ func loadPlan(repoRoot string) *TaskPlan {
 	if err != nil {
 		return &TaskPlan{}
 	}
-	return parsePlanMD(string(data))
+	return ParsePlanMD(string(data))
 }
 
 func savePlan(repoRoot string, plan *TaskPlan) error {
 	return os.WriteFile(planPath(repoRoot), []byte(renderPlanMD(plan)), 0644)
 }
 
-// parsePlanMD parses the markdown task plan format.
-func parsePlanMD(content string) *TaskPlan {
+// ParsePlanMD parses the markdown task plan format.
+func ParsePlanMD(content string) *TaskPlan {
 	plan := &TaskPlan{}
 	lines := strings.Split(content, "\n")
 
@@ -277,15 +277,18 @@ func renderPlanMD(plan *TaskPlan) string {
 	return b.String()
 }
 
-type buildResult struct {
-	success bool
-	output  string
+// BuildResult holds the outcome of an auto-build check.
+type BuildResult struct {
+	Success bool
+	Output  string
 }
 
-func runBuild(repoRoot string) buildResult {
+type buildResult = BuildResult
+
+func runBuild(repoRoot string) BuildResult {
 	cmd := TaskPlanBuildCommand
 	if cmd == "" {
-		return buildResult{success: true, output: "no build command configured"}
+		return BuildResult{Success: true, Output: "no build command configured"}
 	}
 
 	proc := exec.Command("bash", "-c", cmd)
@@ -297,12 +300,22 @@ func runBuild(repoRoot string) buildResult {
 		output = output[:2000] + "\n...(truncated)"
 	}
 	if err != nil {
-		return buildResult{success: false, output: output}
+		return BuildResult{Success: false, Output: output}
 	}
 	if output == "" {
 		output = "success (no output)"
 	}
-	return buildResult{success: true, output: output}
+	return BuildResult{Success: true, Output: output}
+}
+
+// SavePlanMD writes the task plan to disk.
+func SavePlanMD(repoRoot string, plan *TaskPlan) error {
+	return savePlan(repoRoot, plan)
+}
+
+// RunBuildCheck runs the build command and returns the result.
+func RunBuildCheck(repoRoot string) buildResult {
+	return runBuild(repoRoot)
 }
 
 // LoadPlanContext reads the .task.md file and returns it for context injection.

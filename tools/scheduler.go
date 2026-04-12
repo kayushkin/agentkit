@@ -24,7 +24,8 @@ type Job struct {
 	Agent         string     `json:"agent,omitempty"`
 	Prompt        string     `json:"prompt,omitempty"`
 	Model         string     `json:"model,omitempty"`
-	SessionTarget string     `json:"session_target,omitempty"` // "main" or "isolated"
+	Orchestrator  string     `json:"orchestrator,omitempty"`   // "claude-code", "inber", etc.
+	SessionID     string     `json:"session_id,omitempty"`     // session to resume
 	Enabled       bool       `json:"enabled"`
 	HoldUntil     *time.Time `json:"hold_until,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
@@ -52,7 +53,8 @@ type schedulerInput struct {
 	Agent         *string `json:"agent,omitempty"`    // agent name for create (type=agent)
 	Prompt        *string `json:"prompt,omitempty"`   // prompt text for create (type=agent)
 	Model         *string `json:"model,omitempty"`    // model override for create (type=agent)
-	SessionTarget *string `json:"session_target,omitempty"` // "main" or "isolated" for create (type=agent)
+	Orchestrator  *string `json:"orchestrator,omitempty"`   // "claude-code", "inber", etc. for create (type=agent)
+	SessionID     *string `json:"session_id,omitempty"`     // session to resume for create (type=agent)
 	Enabled       *bool   `json:"enabled,omitempty"`  // enable/disable for update
 }
 
@@ -71,7 +73,8 @@ func Scheduler() agentkit.Tool {
 			"agent":          schema.Str("Agent name (required for create with type=agent)"),
 			"prompt":         schema.Str("Prompt text (required for create with type=agent)"),
 			"model":          schema.Str("Model override (optional for type=agent)"),
-			"session_target": schema.Str("Session target: 'main' or 'isolated' (default: isolated)"),
+			"orchestrator":   schema.Str("Orchestrator name: 'claude-code', 'inber', etc. (default: claude-code)"),
+			"session_id":     schema.Str("Session ID to resume (empty for new session)"),
 			"enabled":        schema.Bool("Enable/disable job (for update action)"),
 		}),
 		Run: func(ctx context.Context, raw string) (string, error) {
@@ -180,8 +183,11 @@ func handleList(ctx context.Context, baseURL, token string) (string, error) {
 			if job.Model != "" {
 				result += fmt.Sprintf("Model: %s\n", job.Model)
 			}
-			if job.SessionTarget != "" {
-				result += fmt.Sprintf("Session Target: %s\n", job.SessionTarget)
+			if job.Orchestrator != "" {
+				result += fmt.Sprintf("Orchestrator: %s\n", job.Orchestrator)
+			}
+			if job.SessionID != "" {
+				result += fmt.Sprintf("Session ID: %s\n", job.SessionID)
 			}
 		}
 		result += "\n"
@@ -230,8 +236,11 @@ func handleCreate(ctx context.Context, baseURL, token string, in schedulerInput)
 	if in.Model != nil {
 		reqBody["model"] = *in.Model
 	}
-	if in.SessionTarget != nil {
-		reqBody["session_target"] = *in.SessionTarget
+	if in.Orchestrator != nil {
+		reqBody["orchestrator"] = *in.Orchestrator
+	}
+	if in.SessionID != nil {
+		reqBody["session_id"] = *in.SessionID
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -302,12 +311,15 @@ func handleGet(ctx context.Context, baseURL, token string, id int64) (string, er
 		if job.Model != "" {
 			result += fmt.Sprintf("Model: %s\n", job.Model)
 		}
-		if job.SessionTarget != "" {
-			result += fmt.Sprintf("Session Target: %s\n", job.SessionTarget)
+		if job.Orchestrator != "" {
+			result += fmt.Sprintf("Orchestrator: %s\n", job.Orchestrator)
+		}
+		if job.SessionID != "" {
+			result += fmt.Sprintf("Session ID: %s\n", job.SessionID)
 		}
 	}
-	
-	result += fmt.Sprintf("Created: %s\nUpdated: %s", 
+
+	result += fmt.Sprintf("Created: %s\nUpdated: %s",
 		job.CreatedAt.Format(time.RFC3339), job.UpdatedAt.Format(time.RFC3339))
 
 	return result, nil
